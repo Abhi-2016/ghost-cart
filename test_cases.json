@@ -1,0 +1,99 @@
+{
+  "suite": "Ghost-Cart Agent Behaviour",
+  "version": "0.1.0",
+  "description": "Defines the expected agent output for a given store context and user shopping list. Used by QA for manual validation and by the test runner for automated regression.",
+  "cases": [
+    {
+      "id": "TC-01",
+      "description": "General superstore — show full list",
+      "input": {
+        "store": {
+          "name": "Walmart",
+          "type": "general_superstore"
+        },
+        "user_list": ["Milk", "Eggs", "10mm Wrench", "Diapers"]
+      },
+      "expected": {
+        "action": "notify",
+        "items_to_surface": ["Milk", "Eggs", "10mm Wrench", "Diapers"],
+        "items_to_hide": [],
+        "reasoning": "Walmart carries all categories including hardware and grocery. Surface the full list without filtering."
+      }
+    },
+    {
+      "id": "TC-02",
+      "description": "Grocery-only store — suppress non-grocery items",
+      "input": {
+        "store": {
+          "name": "FreshCo",
+          "type": "grocery_only"
+        },
+        "user_list": ["Milk", "Eggs", "10mm Wrench", "Diapers"]
+      },
+      "expected": {
+        "action": "notify",
+        "items_to_surface": ["Milk", "Eggs", "Diapers"],
+        "items_to_hide": ["10mm Wrench"],
+        "reasoning": "FreshCo is a grocery-only store. Hardware items like a wrench are not stocked here — hide them to avoid confusion."
+      }
+    },
+    {
+      "id": "TC-03",
+      "description": "Hardware store — suppress all grocery items, mute if nothing relevant remains",
+      "input": {
+        "store": {
+          "name": "Home Depot",
+          "type": "hardware_only"
+        },
+        "user_list": ["Milk", "Eggs", "10mm Wrench"]
+      },
+      "expected": {
+        "action": "notify",
+        "items_to_surface": ["10mm Wrench"],
+        "items_to_hide": ["Milk", "Eggs"],
+        "mute_condition": "If user list contained only grocery items at a hardware store, send no notification.",
+        "reasoning": "Home Depot carries hardware only. Surface the wrench; hide grocery items. If no relevant items remain after filtering, suppress the notification entirely."
+      }
+    },
+    {
+      "id": "TC-04",
+      "description": "Gas station — delay notification based on dwell time",
+      "input": {
+        "store": {
+          "name": "Shell Gas",
+          "type": "fuel_station"
+        },
+        "user_list": ["Milk", "Eggs", "Gasoline"]
+      },
+      "expected": {
+        "action": "delay_notify",
+        "dwell_threshold_seconds": 180,
+        "items_to_surface_after_threshold": ["Milk", "Eggs", "Gasoline"],
+        "reasoning": "User is likely just fueling up. A short stop does not indicate shopping intent. Delay notification until dwell time exceeds 180 seconds — at that point the user is likely inside the store."
+      }
+    },
+    {
+      "id": "TC-05",
+      "description": "Predictive restock — empty list, purchase history triggers suggestion",
+      "input": {
+        "store": {
+          "name": "FreshCo",
+          "type": "grocery_only"
+        },
+        "user_list": [],
+        "purchase_history": [
+          {
+            "item": "Eggs",
+            "last_purchased_days_ago": 12
+          }
+        ]
+      },
+      "expected": {
+        "action": "predictive_notify",
+        "suggested_items": ["Eggs"],
+        "notification_copy": "You're at FreshCo. You haven't bought Eggs in 12 days — grab some?",
+        "reasoning": "The user's list is empty but purchase history shows Eggs were last bought 12 days ago. Proactively surface a restock reminder when the user is at a compatible store."
+      }
+    }
+  ]
+}

@@ -1,0 +1,47 @@
+# ── Secrets — never commit these ─────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+
+# ── Node (gateway + mobile) ───────────────────────────────────────────────────
+node_modules/
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+
+# ── Python (brain) ────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+
+# ── Expo / React Native (mobile) ─────────────────────────────────────────────
+.expo/
+web-build/
+expo-env.d.ts
+.metro-health-check*
+*.tsbuildinfo
+/mobile/ios/
+/mobile/android/
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+*.orig.*
+
+# ── macOS ────────────────────────────────────────────────────────────────────
+.DS_Store
+*.pem
+
+# ── Logs ─────────────────────────────────────────────────────────────────────
+*.log
+/tmp/
+
+# ── Editor ───────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
