@@ -7,6 +7,7 @@ const cartRouter = require('./routes/cart');
 const intentRouter = require('./routes/intent');
 const storesRouter = require('./routes/stores');
 const restockRouter = require('./routes/restock');
+const nudgeRouter = require('./routes/nudge');
 const errorHandler = require('./middleware/errorHandler');
 
 const app = express();
@@ -37,6 +38,7 @@ app.use('/api/v1/cart', cartRouter);
 app.use('/api/v1/intent', intentRouter);
 app.use('/api/v1/stores', storesRouter);
 app.use('/api/v1/restock', restockRouter);
+app.use('/api/v1/nudge', nudgeRouter);
 
 // Global error handler (must be last)
 app.use(errorHandler);

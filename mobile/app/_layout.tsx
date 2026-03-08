@@ -4,6 +4,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useLocationWatcher } from '../hooks/useLocationWatcher';
+import { useNudgeAgent } from '../hooks/useNudgeAgent';
 import { useCartStore } from '../store/useCartStore';
 
 const PURCHASE_HISTORY_KEY = 'ghost_cart_purchase_history';
@@ -11,6 +12,12 @@ const PURCHASE_HISTORY_KEY = 'ghost_cart_purchase_history';
 // Starts the GPS polling loop for the whole app
 function LocationWatcher() {
   useLocationWatcher();
+  return null;
+}
+
+// Watches AppState — nudges the user to go shopping after 12h away
+function NudgeAgent() {
+  useNudgeAgent();
   return null;
 }
 
@@ -48,6 +55,7 @@ export default function RootLayout() {
       <StatusBar style="light" />
       <LocationWatcher />
       <PurchaseHistorySync />
+      <NudgeAgent />
       <Stack screenOptions={{ headerShown: false }}>
         <Stack.Screen name="(tabs)" />
       </Stack>

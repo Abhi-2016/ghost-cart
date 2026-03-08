@@ -40,4 +40,14 @@ async function checkRestock(payload) {
   return data;
 }
 
-module.exports = { recommend, processIntent, checkRestock };
+/**
+ * Run the agentic nudge decision on the brain.
+ * Claude decides whether to send a push notification and what to say.
+ * @param {{ purchase_history: object[], current_list: string[], days_since_last_trip: number }} payload
+ */
+async function checkNudge(payload) {
+  const { data } = await client.post('/v1/nudge', payload);
+  return data;
+}
+
+module.exports = { recommend, processIntent, checkRestock, checkNudge };
