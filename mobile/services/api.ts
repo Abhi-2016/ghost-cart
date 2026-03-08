@@ -89,6 +89,40 @@ export async function checkRestock(
   return data;
 }
 
+// ── Nudge agent types ──────────────────────────────────────────────────────────
+
+// Discriminated union: the action field tells you which fields are present
+export type NudgeResult =
+  | {
+      action: 'send';
+      title: string;
+      body: string;
+      urgency: 'low' | 'medium' | 'high';
+      suggested_items: string[];
+    }
+  | {
+      action: 'skip';
+      reason: string;
+    };
+
+/**
+ * Run the agentic nudge decision loop on the brain.
+ * Claude autonomously decides whether to send a push notification and what to say.
+ * No caching — the decision is time-sensitive and personal.
+ */
+export async function checkNudge(
+  purchaseHistory: PurchaseRecord[],
+  currentList: string[],
+  daysSinceLastTrip: number
+): Promise<NudgeResult> {
+  const { data } = await client.post('/api/v1/nudge/check', {
+    purchase_history: purchaseHistory,
+    current_list: currentList,
+    days_since_last_trip: daysSinceLastTrip,
+  });
+  return data;
+}
+
 /**
  * Ask the AI for grocery recommendations based on a natural language query.
  * Used by the chat bot to suggest items and add them to the list.

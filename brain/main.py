@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.middleware.auth import InternalSecretMiddleware
-from app.routers import recommend, intent, restock
+from app.routers import recommend, intent, restock, nudge
 
 
 @asynccontextmanager
@@ -45,3 +45,4 @@ async def health():
 app.include_router(recommend.router, prefix="/v1")
 app.include_router(intent.router, prefix="/v1")
 app.include_router(restock.router, prefix="/v1")
+app.include_router(nudge.router, prefix="/v1")
