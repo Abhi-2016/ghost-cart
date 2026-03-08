@@ -62,10 +62,16 @@ export default function Index() {
   // null = still checking storage, true = show onboarding, false = skip to chat
   const [showOnboarding, setShowOnboarding] = useState<boolean | null>(null);
 
-  // On mount, check if this user has already seen the onboarding screen
+  // On mount, check if this user has already seen the onboarding screen.
+  // If they have, navigate to chat inside useEffect (never during render).
   useEffect(() => {
     AsyncStorage.getItem(ONBOARDING_KEY).then((value) => {
-      setShowOnboarding(value === null); // null means first time
+      if (value !== null) {
+        // Returning user — redirect after render, not during
+        router.replace('/(tabs)/chat');
+      } else {
+        setShowOnboarding(true); // first time — show onboarding
+      }
     });
   }, []);
 
@@ -75,19 +81,13 @@ export default function Index() {
     router.replace('/(tabs)/chat');
   }
 
-  // Still loading — show a blank screen briefly rather than a flash
-  if (showOnboarding === null) {
+  // Still loading (or redirecting) — show a spinner rather than a flash
+  if (!showOnboarding) {
     return (
       <View style={styles.loading}>
         <ActivityIndicator size="large" color="#4F7FFF" />
       </View>
     );
-  }
-
-  // Not first time — redirect immediately
-  if (!showOnboarding) {
-    router.replace('/(tabs)/chat');
-    return null;
   }
 
   // First time — show the welcome screen
