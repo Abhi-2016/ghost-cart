@@ -41,7 +41,7 @@ export default function ListScreen() {
     if (!userCoords) {
       Alert.alert(
         'No GPS signal',
-        'The app hasn't picked up your location yet. Wait a moment and try again.',
+        "The app hasn't picked up your location yet. Wait a moment and try again.",
       );
       return;
     }
