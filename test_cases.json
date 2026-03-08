@@ -1,7 +1,7 @@
 {
   "suite": "Ghost-Cart Agent Behaviour",
-  "version": "0.2.0",
-  "description": "Defines the expected agent output for a given store context and user shopping list. Used by QA for manual validation and by the test runner for automated regression. v0.2.0 adds Restock Agent cases (TC-05 onwards) which test the agentic while-loop with tool_choice=auto.",
+  "version": "0.3.0",
+  "description": "Defines the expected agent output for a given store context and user shopping list. Used by QA for manual validation and by the test runner for automated regression. v0.3.0 adds Nudge Agent cases (TC-09 onwards) which test the proactive push-notification decision loop.",
   "cases": [
     {
       "id": "TC-01",
@@ -162,6 +162,85 @@
           "set_agent_note(...)"
         ],
         "reasoning": "Claude makes independent decisions per item across multiple loop iterations. Milk and Butter are stale. Eggs are fresh. Diapers are already on the list. Claude writes a single summary note at the end."
+      }
+    }
+  ,
+    {
+      "id": "TC-09",
+      "agent": "nudge_agent",
+      "description": "Nudge agent — sends high-urgency notification after 14 days away",
+      "how_it_works": "Claude receives days_since_last_trip=14 and stale purchase history. It calls send_nudge with urgency=high because staples are very likely exhausted.",
+      "input": {
+        "purchase_history": [
+          { "name": "Milk",  "last_bought_at_ms": "<now - 14 days>", "store_where": "FreshCo", "count": 10 },
+          { "name": "Eggs",  "last_bought_at_ms": "<now - 14 days>", "store_where": "FreshCo", "count": 8 },
+          { "name": "Bread", "last_bought_at_ms": "<now - 14 days>", "store_where": "FreshCo", "count": 6 }
+        ],
+        "current_list": [],
+        "days_since_last_trip": 14.0
+      },
+      "expected": {
+        "action": "send",
+        "urgency": "high",
+        "tool_calls_expected": ["send_nudge(title, body, urgency=high, suggested_items=[...])"],
+        "reasoning": "14 days is well past any reasonable restock window for dairy, eggs, and bread. Claude should call send_nudge with high urgency and name specific items."
+      }
+    },
+    {
+      "id": "TC-10",
+      "agent": "nudge_agent",
+      "description": "Nudge agent — skips notification after a recent shopping trip (3 days ago)",
+      "how_it_works": "Claude sees days_since_last_trip=3 and calls skip_nudge because the user shopped very recently.",
+      "input": {
+        "purchase_history": [
+          { "name": "Milk",  "last_bought_at_ms": "<now - 3 days>", "store_where": "Walmart", "count": 5 },
+          { "name": "Eggs",  "last_bought_at_ms": "<now - 3 days>", "store_where": "Walmart", "count": 4 }
+        ],
+        "current_list": ["Butter"],
+        "days_since_last_trip": 3.0
+      },
+      "expected": {
+        "action": "skip",
+        "tool_calls_expected": ["skip_nudge(reason='User shopped 3 days ago, items still fresh')"],
+        "reasoning": "3 days since the last trip is well within the freshness window for all items. Claude should call skip_nudge to avoid spamming the user."
+      }
+    },
+    {
+      "id": "TC-11",
+      "agent": "nudge_agent",
+      "description": "Nudge agent — skips when purchase history is empty (new user)",
+      "how_it_works": "With no purchase history Claude has no basis for a recommendation and should call skip_nudge.",
+      "input": {
+        "purchase_history": [],
+        "current_list": [],
+        "days_since_last_trip": 0.0
+      },
+      "expected": {
+        "action": "skip",
+        "tool_calls_expected": ["skip_nudge(reason='No purchase history available')"],
+        "reasoning": "Without any history Claude cannot identify what the user buys regularly. It should skip rather than guess or send a generic notification."
+      }
+    },
+    {
+      "id": "TC-12",
+      "agent": "nudge_agent",
+      "description": "Nudge agent — sends medium-urgency nudge at 10 days, calls out specific depleted items",
+      "how_it_works": "Claude sees 10 days elapsed and a mix of stale items. It calls send_nudge with medium urgency and lists the most likely depleted items.",
+      "input": {
+        "purchase_history": [
+          { "name": "Milk",        "last_bought_at_ms": "<now - 10 days>", "store_where": "Costco", "count": 12 },
+          { "name": "Greek Yogurt","last_bought_at_ms": "<now - 10 days>", "store_where": "Costco", "count": 7 },
+          { "name": "Chicken",     "last_bought_at_ms": "<now - 10 days>", "store_where": "Costco", "count": 5 },
+          { "name": "Olive Oil",   "last_bought_at_ms": "<now - 45 days>", "store_where": "Costco", "count": 2 }
+        ],
+        "current_list": ["Spinach"],
+        "days_since_last_trip": 10.0
+      },
+      "expected": {
+        "action": "send",
+        "urgency": "medium",
+        "tool_calls_expected": ["send_nudge(title, body, urgency=medium, suggested_items=[Milk, Greek Yogurt, Chicken, ...])"],
+        "reasoning": "10 days is clearly overdue for dairy and protein. Olive Oil (45 days) is long overdue. Claude should call send_nudge with medium urgency and surface the most depleted items by name."
       }
     }
   ]
