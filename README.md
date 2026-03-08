@@ -1,58 +1,32 @@
 # Ghost-Cart
 
-> A location-aware grocery agent that tells you *what* to buy and *where* to find it nearby.
+A **location-aware AI shopping assistant** built on a hybrid Node.js + Python stack with a React Native mobile app. Ghost-Cart uses Claude to power both reactive and proactive agentic features — from filtering your list when you walk into a store, to autonomously deciding when to nudge you to go shopping.
 
 ---
 
-## What It Does
-
-Ghost-Cart accepts a natural-language grocery query (e.g. *"high-protein breakfast for two"*) plus the user's GPS coordinates and returns a ranked list of grocery items with price estimates and context-aware reasoning — ready to feed a shopping list or a store-routing UI.
-
----
-
-## Why a Hybrid Stack? (PM Rationale)
-
-### The Problem With a Single-Service Approach
-
-A naive implementation would put everything — API routing, AI calls, caching — inside one server. That creates two serious problems at scale:
-
-| Problem | Impact |
-|---|---|
-| **API key exposure** | A single-service server that also serves a browser client must either expose the Anthropic key in the bundle or add auth middleware that's easy to misconfigure. |
-| **Cost at scale** | Every user query hitting Claude directly costs money. Identical queries from users near the same neighbourhood would each trigger a full API round-trip. |
-
-### The Solution: A Two-Layer Architecture
+## Architecture
 
 ```
-Browser / Mobile  →  Gateway (Node.js)  →  Brain (Python)  →  Claude API
+Mobile App (React Native / Expo)
+        │
+        │  HTTP
+        ▼
+Gateway  (Node.js / Express  :3000)
+  • Zod validation          • Rate limiting
+  • Response caching         • Secret forwarding
+        │
+        │  POST + X-Internal-Secret
+        ▼
+Brain    (Python / FastAPI    :8000)
+  • Anthropic Claude API     • TTL cache
+  • Agentic tool-use loops   • Pydantic models
 ```
 
-#### Layer 1 — Gateway (Node.js / Express)
+### Why a Hybrid Stack?
 
-Node.js is the industry standard for API gateways. It excels at:
+The gateway is the **only service exposed to the internet**. The brain is not publicly routable — it only accepts requests carrying the correct `X-Internal-Secret` header. This means the `ANTHROPIC_API_KEY` never leaves the brain process, even if the gateway is compromised.
 
-- **I/O-bound fan-out** — proxying requests, checking caches, validating payloads.
-- **Ecosystem** — Helmet, rate-limit, Zod, and node-cache are all production-grade and trivial to wire together.
-- **Operational familiarity** — most front-end and full-stack engineers can read and maintain Express without context-switching.
-
-The gateway is the **only service exposed to the internet**. It enforces:
-- Input validation (Zod) before any data touches the AI layer.
-- Rate limiting (60 req / min / IP) to prevent abuse.
-- A response cache (`node-cache`, 10-min TTL) keyed on `(query, rounded-lat, rounded-lng)`. Cache hits never reach the brain — this is the primary cost-control lever.
-
-#### Layer 2 — Brain (Python / FastAPI)
-
-Python is the lingua franca of AI/ML. It gives us:
-
-- **First-class Anthropic SDK** — async client, typed responses, streaming support.
-- **FastAPI + Pydantic** — automatic schema validation and OpenAPI docs with zero boilerplate.
-- **Isolation** — the `ANTHROPIC_API_KEY` lives only inside this process. It is never forwarded to the gateway, never logged, never serialised into a response.
-
-The brain is **not publicly routable**. It only accepts requests that carry the correct `X-Internal-Secret` header, which is shared exclusively with the gateway via environment variables.
-
-A second, in-process `cachetools.TTLCache` sits inside the brain as a backstop — if the gateway cache is cold (e.g. after a restart) but the brain has seen the same query recently, the AI call is still skipped.
-
-### Security Model
+The gateway also holds a `node-cache` response cache (10-min TTL). Cache hits never reach the brain — this is the primary cost-control lever. At a 60% hit rate on 100k monthly requests, that's ~60% fewer AI calls.
 
 ```
 Internet → [Gateway] — validated, rate-limited — → [Brain] — secret-gated — → Claude
@@ -60,17 +34,132 @@ Internet → [Gateway] — validated, rate-limited — → [Brain] — secret-ga
            No AI keys                            No public route
 ```
 
-- **API key never leaves the brain process.** Even if the gateway is fully compromised, the attacker cannot extract the Anthropic key.
-- **Internal secret** prevents anyone who discovers the brain's port from calling it directly.
-- **Helmet + rate-limit** on the gateway handle the standard OWASP surface.
+---
 
-### Cost Model
+## Features
 
+### Current
+
+| # | Feature | What it does | Agentic? | Trigger |
+|---|---|---|---|---|
+| 1 | **AI Chat Bot** | Type what you need in plain English — Claude builds your shopping list | No | Manual |
+| 2 | **GPS Store Detection** | Polls GPS every 30s, detects when you walk into a known store | No | Timer loop |
+| 3 | **Google Places Auto-Locate** | Automatically maps GPS coordinates for all your stores on first launch | No | First GPS fix |
+| 4 | **Store-Aware Intent Filter** | Hides items the current store doesn't carry (e.g. wrench at FreshCo → hidden) | No | Store entry |
+| 5 | **Restock Agent** | Autonomously decides which past purchases to re-add to your list | **Yes** | Store entry |
+| 6 | **Nudge Agent** | Proactively decides whether to send a push notification to go shopping | **Yes** | App foreground after 12h |
+| 7 | **Smart List Management** | Add, check off, clear items; purchase history recorded automatically | No | Manual |
+| 8 | **Live GPS Status Banner** | Shows "Waiting / Scanning / Near [Store]" in real time | No | Continuous |
+
+### Agentic vs Non-Agentic
+
+| | Non-Agentic (features 1–4, 7–8) | Restock Agent | Nudge Agent |
+|---|---|---|---|
+| Who decides? | Your code | Claude | Claude |
+| Claude calls | 0 or 1 forced | 1–N in a while-loop | 1–N in a while-loop |
+| Tool choice | `tool_choice="tool"` or none | `tool_choice="auto"` | `tool_choice="auto"` |
+| Tools available | Prescribed by code | `add_to_list`, `skip_item`, `set_agent_note` | `send_nudge`, `skip_nudge` |
+| Threshold logic | Hard-coded in code | Claude decides | Claude decides |
+| Output copy | Templated | Claude writes the note | Claude writes the notification |
+
+---
+
+## Roadmap
+
+| # | Feature | What it does | Why it's agentic |
+|---|---|---|---|
+| 1 | **Multi-Store Trip Planner** | Claude plans the most efficient route across multiple stores to cover your full list | Claude decides which store covers which items and optimises the order — no code sets the rules |
+| 2 | **Meal Planning Agent** | Say "plan dinners for this week" → Claude builds a full meal plan and populates your list | Multi-step loop: Claude picks meals, checks pantry gaps, adds ingredients, balances nutrition |
+| 3 | **Budget Agent** | Set a spend limit; Claude autonomously swaps expensive items for cheaper alternatives | Claude evaluates trade-offs per item across loop rounds — not a single rule-based swap |
+| 4 | **Receipt Scanner** | Photo of a receipt → Claude extracts purchases and updates your history automatically | Claude reads unstructured data and maps it to structured purchase records without templates |
+| 5 | **Pantry Memory** | Tracks what you have at home; Claude avoids adding items you don't need yet | Claude reasons across pantry state + history + list simultaneously each run |
+| 6 | **PostgreSQL persistence** | Persist lists, purchase history, and preferences across devices | — |
+| 7 | **Redis cache** | Multi-instance cache layer to replace in-process node-cache | — |
+| 8 | **Docker Compose** | One-command local setup for all three services | — |
+
+---
+
+## Quick Start
+
+### Brain (Python / FastAPI)
+
+```bash
+cd brain
+cp .env.example .env        # fill in ANTHROPIC_API_KEY and BRAIN_INTERNAL_SECRET
+pip install -r requirements.txt
+uvicorn main:app --reload
+# → http://localhost:8000/health
 ```
-Monthly Claude cost ≈ (total_requests × (1 − cache_hit_rate)) × cost_per_call
+
+### Gateway (Node.js / Express)
+
+```bash
+cd gateway
+cp .env.example .env        # fill in BRAIN_BASE_URL and BRAIN_INTERNAL_SECRET
+npm install
+npm run dev
+# → http://localhost:3000/health
 ```
 
-In a dense urban area, many users within ~1 km will make semantically identical queries (e.g. *"cheap fruit"*). The gateway cache collapses those into a single upstream call. At a 60 % hit rate on 100 k monthly requests, that's 60 k fewer AI calls — roughly **60 % cost reduction** before any other optimisation.
+### Mobile (React Native / Expo)
+
+```bash
+cd mobile
+npm install
+npx expo start
+# Scan QR code with Expo Go on your device
+# Update BASE_URL in mobile/services/api.ts to your machine's local IP
+```
+
+---
+
+## Example Requests
+
+### Grocery recommendations (chat bot)
+```bash
+curl -s -X POST http://localhost:3000/api/v1/cart/recommend \
+  -H 'Content-Type: application/json' \
+  -d '{"query":"high-protein breakfast","location":{"lat":37.77,"lng":-122.41}}'
+```
+
+### Nudge Agent (agentic)
+```bash
+curl -s -X POST http://localhost:3000/api/v1/nudge/check \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "purchase_history": [
+      {"name":"Milk","last_bought_at_ms":1771737345126,"store_where":"FreshCo","count":10},
+      {"name":"Eggs","last_bought_at_ms":1771737345126,"store_where":"FreshCo","count":8}
+    ],
+    "current_list": [],
+    "days_since_last_trip": 14.0
+  }'
+# → {"action":"send","title":"Time to restock! 🛒","urgency":"high","suggested_items":["Milk","Eggs"]}
+```
+
+---
+
+## Environment Variables
+
+### `gateway/.env`
+
+| Variable | Description |
+|---|---|
+| `PORT` | Express listen port (default `3000`) |
+| `NODE_ENV` | `development` \| `production` |
+| `BRAIN_BASE_URL` | Full URL of the brain service |
+| `BRAIN_INTERNAL_SECRET` | Shared secret for gateway → brain auth |
+| `GOOGLE_PLACES_API_KEY` | Google Places Nearby Search key |
+
+### `brain/.env`
+
+| Variable | Description |
+|---|---|
+| `ANTHROPIC_API_KEY` | Anthropic secret key — never forwarded to clients |
+| `CLAUDE_MODEL` | Model ID (default `claude-sonnet-4-6`) |
+| `BRAIN_INTERNAL_SECRET` | Must match gateway value |
+| `CACHE_MAXSIZE` | Max entries in AI response cache |
+| `CACHE_TTL` | Seconds before cached AI response expires |
 
 ---
 
@@ -78,62 +167,50 @@ In a dense urban area, many users within ~1 km will make semantically identical 
 
 ```
 Ghost-Cart/
-├── gateway/            # Node.js Orchestrator
-│   ├── src/
-│   │   ├── app.js
-│   │   ├── index.js
-│   │   ├── routes/
-│   │   ├── services/
-│   │   └── middleware/
-│   ├── package.json
-│   └── .env.example
+├── gateway/                  # Node.js Orchestrator (:3000)
+│   └── src/
+│       ├── routes/           # cart, intent, stores, restock, nudge
+│       ├── services/         # brainClient, cache
+│       └── middleware/       # errorHandler
 │
-├── brain/              # Python AI Engine
-│   ├── main.py
-│   ├── app/
-│   │   ├── config.py
-│   │   ├── middleware/
-│   │   ├── routers/
-│   │   └── services/
-│   ├── requirements.txt
-│   └── .env.example
+├── brain/                    # Python AI Engine (:8000)
+│   └── app/
+│       ├── routers/          # recommend, intent, restock, nudge
+│       ├── services/         # ai, restock_agent, nudge_agent
+│       └── middleware/       # auth
 │
-├── CLAUDE.md           # Architecture contract + coding standards
-└── README.md           # This file
+├── mobile/                   # React Native / Expo App
+│   ├── app/                  # Expo Router screens + layout
+│   ├── hooks/                # useLocationWatcher, useNudgeAgent
+│   ├── services/             # api, storeLookup
+│   └── store/                # useCartStore (Zustand)
+│
+├── test_cases.json           # Agent behaviour test cases (v0.3.0, 12 cases)
+├── CLAUDE.md                 # Architecture contract + coding standards
+└── README.md
 ```
 
 ---
 
-## Quick Start
+## Test Cases
 
-```bash
-# Terminal 1 — Brain
-cd brain && cp .env.example .env   # add ANTHROPIC_API_KEY
-pip install -r requirements.txt
-uvicorn main:app --reload
+Agent behaviour is documented and regression-tested in [`test_cases.json`](./test_cases.json).
 
-# Terminal 2 — Gateway
-cd gateway && cp .env.example .env
-npm install && npm run dev
-
-# Test
-curl -s -X POST http://localhost:3000/api/v1/cart/recommend \
-  -H 'Content-Type: application/json' \
-  -d '{"query":"cheap fruit","location":{"lat":37.77,"lng":-122.41}}'
-```
+| Agent | Cases | Tested |
+|---|---|---|
+| Intent Filter | TC-01 → TC-04 | Documented |
+| Restock Agent | TC-05 → TC-08 | Documented |
+| Nudge Agent | TC-09 → TC-12 | Live-tested ✅ |
 
 ---
 
-## Roadmap
+## Tech Stack
 
-### In Progress
-- [ ] Mobile app (React Native / Expo) — chat bot + smart list UI
-
-### Planned
-- [ ] **Photo-to-list** — user takes a photo of a handwritten or printed grocery list; AI reads it and converts it into items in the app automatically
-- [ ] **PostgreSQL database** — persist user lists, purchase history, and preferences across devices and sessions; replaces in-memory/local storage
-- [ ] Store lookup integration (Google Places / Foursquare)
-- [ ] User preference profiles (dietary restrictions, budget)
-- [ ] Streaming responses via SSE
-- [ ] Redis cache layer for multi-instance deployments
-- [ ] Docker Compose for one-command local setup
+| Layer | Technology |
+|---|---|
+| Mobile | React Native, Expo SDK 54, Expo Router, Zustand, AsyncStorage |
+| Gateway | Node.js 20+, Express 4, Zod, node-cache, Helmet, Axios |
+| Brain | Python 3.11+, FastAPI, Uvicorn, Pydantic, cachetools, Anthropic SDK |
+| AI Model | Claude Sonnet 4.6 (`claude-sonnet-4-6`) |
+| Location | Expo Location, Google Places Nearby Search API |
+| Notifications | expo-notifications (local push) |
