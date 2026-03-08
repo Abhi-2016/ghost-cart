@@ -1,10 +1,11 @@
 {
   "suite": "Ghost-Cart Agent Behaviour",
-  "version": "0.1.0",
-  "description": "Defines the expected agent output for a given store context and user shopping list. Used by QA for manual validation and by the test runner for automated regression.",
+  "version": "0.2.0",
+  "description": "Defines the expected agent output for a given store context and user shopping list. Used by QA for manual validation and by the test runner for automated regression. v0.2.0 adds Restock Agent cases (TC-05 onwards) which test the agentic while-loop with tool_choice=auto.",
   "cases": [
     {
       "id": "TC-01",
+      "agent": "intent_filter",
       "description": "General superstore — show full list",
       "input": {
         "store": {
@@ -22,6 +23,7 @@
     },
     {
       "id": "TC-02",
+      "agent": "intent_filter",
       "description": "Grocery-only store — suppress non-grocery items",
       "input": {
         "store": {
@@ -39,6 +41,7 @@
     },
     {
       "id": "TC-03",
+      "agent": "intent_filter",
       "description": "Hardware store — suppress all grocery items, mute if nothing relevant remains",
       "input": {
         "store": {
@@ -57,6 +60,7 @@
     },
     {
       "id": "TC-04",
+      "agent": "intent_filter",
       "description": "Gas station — delay notification based on dwell time",
       "input": {
         "store": {
@@ -74,25 +78,90 @@
     },
     {
       "id": "TC-05",
-      "description": "Predictive restock — empty list, purchase history triggers suggestion",
+      "agent": "restock_agent",
+      "description": "Restock agent — adds stale item (bought 12 days ago), skips recent item (bought 2 days ago)",
+      "how_it_works": "Claude runs a while-loop with tool_choice=auto. It independently calls add_to_list or skip_item for each purchase history entry. The loop ends when Claude stops calling tools.",
       "input": {
-        "store": {
-          "name": "FreshCo",
-          "type": "grocery_only"
-        },
-        "user_list": [],
+        "store": { "name": "FreshCo", "type": "grocery_only" },
+        "current_list": [],
         "purchase_history": [
-          {
-            "item": "Eggs",
-            "last_purchased_days_ago": 12
-          }
+          { "name": "Eggs", "last_bought_at_ms": "<now - 12 days>", "store_where": "FreshCo", "count": 4 },
+          { "name": "Milk", "last_bought_at_ms": "<now - 2 days>",  "store_where": "FreshCo", "count": 6 }
         ]
       },
       "expected": {
-        "action": "predictive_notify",
-        "suggested_items": ["Eggs"],
-        "notification_copy": "You're at FreshCo. You haven't bought Eggs in 12 days — grab some?",
-        "reasoning": "The user's list is empty but purchase history shows Eggs were last bought 12 days ago. Proactively surface a restock reminder when the user is at a compatible store."
+        "items_to_add": ["Eggs"],
+        "items_skipped": ["Milk"],
+        "agent_note": "Added Eggs (12 days since last purchase). Skipped Milk (bought recently, 2 days ago).",
+        "tool_calls_expected": ["add_to_list(Eggs)", "skip_item(Milk)", "set_agent_note(...)"],
+        "reasoning": "Eggs are stale (>7 days) so Claude calls add_to_list. Milk is fresh (<7 days) so Claude calls skip_item. Claude autonomously decides the threshold — no code tells it the cutoff."
+      }
+    },
+    {
+      "id": "TC-06",
+      "agent": "restock_agent",
+      "description": "Restock agent — skips item already on the current list to avoid duplicates",
+      "how_it_works": "Claude receives current_list alongside purchase_history. It should recognise Bread is already listed and skip it.",
+      "input": {
+        "store": { "name": "Trader Joe's", "type": "grocery_only" },
+        "current_list": ["Bread"],
+        "purchase_history": [
+          { "name": "Bread", "last_bought_at_ms": "<now - 10 days>", "store_where": "Trader Joe's", "count": 3 }
+        ]
+      },
+      "expected": {
+        "items_to_add": [],
+        "items_skipped": ["Bread"],
+        "agent_note": "Skipped Bread — it is already on your list.",
+        "tool_calls_expected": ["skip_item(Bread)", "set_agent_note(...)"],
+        "reasoning": "Even though Bread was bought 10 days ago, it is already on the current list. Claude should not create a duplicate and should use skip_item instead."
+      }
+    },
+    {
+      "id": "TC-07",
+      "agent": "restock_agent",
+      "description": "Restock agent — empty purchase history, no tool calls expected",
+      "how_it_works": "With no history, Claude has nothing to reason about. It should exit the while-loop immediately (0 iterations) and return an empty result.",
+      "input": {
+        "store": { "name": "Costco", "type": "general_superstore" },
+        "current_list": ["Paper Towels"],
+        "purchase_history": []
+      },
+      "expected": {
+        "items_to_add": [],
+        "items_skipped": [],
+        "agent_note": null,
+        "tool_calls_expected": [],
+        "reasoning": "No purchase history means Claude has no items to evaluate. The agentic loop exits in the first iteration without calling any tools."
+      }
+    },
+    {
+      "id": "TC-08",
+      "agent": "restock_agent",
+      "description": "Restock agent — multi-item mixed result with agent note summarising all decisions",
+      "how_it_works": "Claude autonomously processes all 4 items across multiple loop iterations, calling a different tool for each, then sets a final summary note.",
+      "input": {
+        "store": { "name": "Walmart", "type": "general_superstore" },
+        "current_list": ["Diapers"],
+        "purchase_history": [
+          { "name": "Milk",    "last_bought_at_ms": "<now - 9 days>",  "store_where": "Walmart", "count": 8 },
+          { "name": "Eggs",    "last_bought_at_ms": "<now - 1 day>",   "store_where": "Walmart", "count": 5 },
+          { "name": "Diapers", "last_bought_at_ms": "<now - 14 days>", "store_where": "Walmart", "count": 2 },
+          { "name": "Butter",  "last_bought_at_ms": "<now - 20 days>", "store_where": "Walmart", "count": 1 }
+        ]
+      },
+      "expected": {
+        "items_to_add": ["Milk", "Butter"],
+        "items_skipped": ["Eggs", "Diapers"],
+        "agent_note": "Added Milk (9 days) and Butter (20 days). Skipped Eggs (bought yesterday) and Diapers (already on your list).",
+        "tool_calls_expected": [
+          "add_to_list(Milk)",
+          "skip_item(Eggs)",
+          "skip_item(Diapers)",
+          "add_to_list(Butter)",
+          "set_agent_note(...)"
+        ],
+        "reasoning": "Claude makes independent decisions per item across multiple loop iterations. Milk and Butter are stale. Eggs are fresh. Diapers are already on the list. Claude writes a single summary note at the end."
       }
     }
   ]
