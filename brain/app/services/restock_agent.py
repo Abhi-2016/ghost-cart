@@ -14,11 +14,16 @@ The key distinction:
   restock_agent   → tool_choice="auto"  → Claude picks tools freely, loop until done
 """
 
+import logging
+import time
 from datetime import datetime, timezone
 
 import anthropic
 
 from app.config import settings
+from app.middleware.request_id import get_request_id
+
+log = logging.getLogger(__name__)
 
 _client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
 
@@ -189,16 +194,62 @@ async def run_restock_agent(
     items_to_add: list[dict] = []
     agent_note: str | None = None
     iterations = 0
+    started_at = time.monotonic()
+
+    # Concept: log the agent inputs at the start so you can correlate every
+    # downstream tool call back to the original request context.
+    log.info(
+        "agent.start",
+        extra={
+            "event": "agent.start",
+            "agent": "restock",
+            "store": store_name,
+            "store_type": store_type,
+            "history_count": len(purchase_history),
+            "list_count": len(current_list),
+            "request_id": get_request_id(),
+        },
+    )
 
     while iterations < MAX_ITERATIONS:
         iterations += 1
 
+        # Concept: DEBUG level — too noisy for production INFO stream but
+        # invaluable when diagnosing why Claude took N iterations.
+        log.debug(
+            "agent.claude_call",
+            extra={
+                "event": "agent.claude_call",
+                "agent": "restock",
+                "iteration": iterations,
+                "request_id": get_request_id(),
+            },
+        )
+
+        call_start = time.monotonic()
         response = await _client.messages.create(
             model=settings.claude_model,
             max_tokens=2048,
             tools=RESTOCK_TOOLS,
             tool_choice={"type": "auto"},  # ← Claude decides; not forced
             messages=messages,
+        )
+        call_ms = round((time.monotonic() - call_start) * 1000)
+
+        # Concept: always log token usage — it maps directly to cost.
+        # input_tokens × model_rate + output_tokens × model_rate = $ per call.
+        log.info(
+            "agent.claude_response",
+            extra={
+                "event": "agent.claude_response",
+                "agent": "restock",
+                "iteration": iterations,
+                "input_tokens": response.usage.input_tokens,
+                "output_tokens": response.usage.output_tokens,
+                "stop_reason": response.stop_reason,
+                "latency_ms": call_ms,
+                "request_id": get_request_id(),
+            },
         )
 
         # Find every tool call Claude made this round
@@ -215,7 +266,19 @@ async def run_restock_agent(
                 name = call.input["item_name"]
                 reason = call.input["reason"]
                 items_to_add.append({"name": name, "reason": reason})
-                print(f"[RestockAgent] add_to_list: {name} — {reason}")
+                # Concept: log every tool call Claude makes — this is your
+                # audit trail of the agent's autonomous decisions.
+                log.info(
+                    "agent.tool_call",
+                    extra={
+                        "event": "agent.tool_call",
+                        "agent": "restock",
+                        "tool": "add_to_list",
+                        "item": name,
+                        "reason": reason,
+                        "request_id": get_request_id(),
+                    },
+                )
                 tool_results.append({
                     "type": "tool_result",
                     "tool_use_id": call.id,
@@ -224,7 +287,17 @@ async def run_restock_agent(
 
             elif call.name == "skip_item":
                 name = call.input["item_name"]
-                print(f"[RestockAgent] skip_item: {name} — {call.input['reason']}")
+                log.info(
+                    "agent.tool_call",
+                    extra={
+                        "event": "agent.tool_call",
+                        "agent": "restock",
+                        "tool": "skip_item",
+                        "item": name,
+                        "reason": call.input["reason"],
+                        "request_id": get_request_id(),
+                    },
+                )
                 tool_results.append({
                     "type": "tool_result",
                     "tool_use_id": call.id,
@@ -233,7 +306,16 @@ async def run_restock_agent(
 
             elif call.name == "set_agent_note":
                 agent_note = call.input["message"]
-                print(f"[RestockAgent] set_agent_note: {agent_note}")
+                log.info(
+                    "agent.tool_call",
+                    extra={
+                        "event": "agent.tool_call",
+                        "agent": "restock",
+                        "tool": "set_agent_note",
+                        "message": agent_note,
+                        "request_id": get_request_id(),
+                    },
+                )
                 tool_results.append({
                     "type": "tool_result",
                     "tool_use_id": call.id,
@@ -244,5 +326,24 @@ async def run_restock_agent(
         messages.append({"role": "assistant", "content": response.content})
         messages.append({"role": "user", "content": tool_results})
 
-    print(f"[RestockAgent] Done in {iterations} round(s). Adding {len(items_to_add)} item(s).")
+    total_ms = round((time.monotonic() - started_at) * 1000)
+
+    # Concept: the completion log is the single most important line —
+    # it captures the final outcome, total cost indicators, and duration
+    # so you can slice agent quality by store, time, and items added.
+    log.info(
+        "agent.complete",
+        extra={
+            "event": "agent.complete",
+            "agent": "restock",
+            "store": store_name,
+            "iterations": iterations,
+            "items_added": len(items_to_add),
+            "items_added_names": [i["name"] for i in items_to_add],
+            "has_note": agent_note is not None,
+            "total_latency_ms": total_ms,
+            "request_id": get_request_id(),
+        },
+    )
+
     return {"items_to_add": items_to_add, "agent_note": agent_note}

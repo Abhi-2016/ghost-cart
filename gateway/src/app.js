@@ -1,6 +1,5 @@
 const express = require('express');
 const helmet = require('helmet');
-const morgan = require('morgan');
 const rateLimit = require('express-rate-limit');
 
 const cartRouter = require('./routes/cart');
@@ -9,14 +8,16 @@ const storesRouter = require('./routes/stores');
 const restockRouter = require('./routes/restock');
 const nudgeRouter = require('./routes/nudge');
 const errorHandler = require('./middleware/errorHandler');
+const requestLogger = require('./middleware/requestLogger');
 
 const app = express();
 
 // Security headers
 app.use(helmet());
 
-// Request logging
-app.use(morgan('dev'));
+// Structured JSON request logging (replaces morgan)
+// Assigns X-Request-ID and wraps each request in AsyncLocalStorage context
+app.use(requestLogger);
 
 // Body parsing
 app.use(express.json({ limit: '256kb' }));

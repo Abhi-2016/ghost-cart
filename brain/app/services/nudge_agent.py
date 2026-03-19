@@ -19,11 +19,16 @@ Both require Claude to provide a reason — this keeps the loop deliberate
 and leaves a clean audit trail in the logs.
 """
 
+import logging
+import time
 from datetime import datetime, timezone
 
 import anthropic
 
 from app.config import settings
+from app.middleware.request_id import get_request_id
+
+log = logging.getLogger(__name__)
 
 _client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
 
@@ -195,16 +200,55 @@ async def run_nudge_agent(
 
     result: dict | None = None
     iterations = 0
+    started_at = time.monotonic()
+
+    log.info(
+        "agent.start",
+        extra={
+            "event": "agent.start",
+            "agent": "nudge",
+            "days_since_last_trip": round(days_since_last_trip, 1),
+            "history_count": len(purchase_history),
+            "list_count": len(current_list),
+            "request_id": get_request_id(),
+        },
+    )
 
     while iterations < MAX_ITERATIONS:
         iterations += 1
 
+        log.debug(
+            "agent.claude_call",
+            extra={
+                "event": "agent.claude_call",
+                "agent": "nudge",
+                "iteration": iterations,
+                "request_id": get_request_id(),
+            },
+        )
+
+        call_start = time.monotonic()
         response = await _client.messages.create(
             model=settings.claude_model,
             max_tokens=1024,
             tools=NUDGE_TOOLS,
             tool_choice={"type": "auto"},  # ← Claude decides freely; not forced
             messages=messages,
+        )
+        call_ms = round((time.monotonic() - call_start) * 1000)
+
+        log.info(
+            "agent.claude_response",
+            extra={
+                "event": "agent.claude_response",
+                "agent": "nudge",
+                "iteration": iterations,
+                "input_tokens": response.usage.input_tokens,
+                "output_tokens": response.usage.output_tokens,
+                "stop_reason": response.stop_reason,
+                "latency_ms": call_ms,
+                "request_id": get_request_id(),
+            },
         )
 
         # Find every tool call Claude made this round
@@ -224,9 +268,17 @@ async def run_nudge_agent(
                     "urgency": call.input["urgency"],
                     "suggested_items": call.input["suggested_items"],
                 }
-                print(
-                    f"[NudgeAgent] send_nudge: \"{call.input['title']}\" "
-                    f"(urgency={call.input['urgency']})"
+                log.info(
+                    "agent.tool_call",
+                    extra={
+                        "event": "agent.tool_call",
+                        "agent": "nudge",
+                        "tool": "send_nudge",
+                        "urgency": call.input["urgency"],
+                        "title": call.input["title"],
+                        "suggested_items": call.input["suggested_items"],
+                        "request_id": get_request_id(),
+                    },
                 )
                 tool_results.append({
                     "type": "tool_result",
@@ -239,7 +291,16 @@ async def run_nudge_agent(
                     "action": "skip",
                     "reason": call.input["reason"],
                 }
-                print(f"[NudgeAgent] skip_nudge: {call.input['reason']}")
+                log.info(
+                    "agent.tool_call",
+                    extra={
+                        "event": "agent.tool_call",
+                        "agent": "nudge",
+                        "tool": "skip_nudge",
+                        "reason": call.input["reason"],
+                        "request_id": get_request_id(),
+                    },
+                )
                 tool_results.append({
                     "type": "tool_result",
                     "tool_use_id": call.id,
@@ -260,9 +321,29 @@ async def run_nudge_agent(
             "action": "skip",
             "reason": "Agent produced no decision — safety fallback (no tool called).",
         }
+        log.warning(
+            "agent.fallback",
+            extra={
+                "event": "agent.fallback",
+                "agent": "nudge",
+                "iterations": iterations,
+                "request_id": get_request_id(),
+            },
+        )
 
-    print(
-        f"[NudgeAgent] Done in {iterations} round(s). "
-        f"Action={result['action']}"
+    total_ms = round((time.monotonic() - started_at) * 1000)
+
+    log.info(
+        "agent.complete",
+        extra={
+            "event": "agent.complete",
+            "agent": "nudge",
+            "action": result["action"],
+            "urgency": result.get("urgency"),
+            "iterations": iterations,
+            "total_latency_ms": total_ms,
+            "request_id": get_request_id(),
+        },
     )
+
     return result
