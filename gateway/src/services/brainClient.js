@@ -1,4 +1,22 @@
+/**
+ * brainClient.js
+ *
+ * Concept: Service-call logging
+ * ------------------------------
+ * Every call to the brain is timed and logged with:
+ *   - endpoint      → which agent/service was called
+ *   - latency_ms    → how long the Claude round-trip took (key cost/perf signal)
+ *   - request_id    → forwarded so brain logs share the same correlation ID
+ *   - status / error → did it succeed?
+ *
+ * The X-Request-ID header is forwarded to the brain so both services write
+ * the same ID. You can then filter logs across both services in one query:
+ *   request_id = "a1b2c3d4"  →  see gateway request + brain agent loop together
+ */
+
 const axios = require('axios');
+const logger = require('../lib/logger');
+const context = require('../lib/requestContext');
 
 const BRAIN_BASE_URL = process.env.BRAIN_BASE_URL || 'http://localhost:8000';
 const BRAIN_INTERNAL_SECRET = process.env.BRAIN_INTERNAL_SECRET;
@@ -8,46 +26,42 @@ const client = axios.create({
   timeout: 30_000,
   headers: {
     'Content-Type': 'application/json',
-    // Shared secret so brain rejects requests not coming from the gateway
     ...(BRAIN_INTERNAL_SECRET && { 'X-Internal-Secret': BRAIN_INTERNAL_SECRET }),
   },
 });
 
 /**
- * Forward a recommendation request to the Python brain.
- * @param {{ query: string, location: { lat: number, lng: number }, radius_km: number }} payload
+ * Shared wrapper: times the call, logs success/failure, forwards request ID.
  */
-async function recommend(payload) {
-  const { data } = await client.post('/v1/recommend', payload);
-  return data;
+async function callBrain(endpoint, payload) {
+  const requestId = context.getRequestId();
+  const startedAt = Date.now();
+
+  try {
+    const { data } = await client.post(endpoint, payload, {
+      headers: { 'X-Request-ID': requestId },
+    });
+    logger.info('brain.call', {
+      endpoint,
+      latency_ms: Date.now() - startedAt,
+      request_id: requestId,
+    });
+    return data;
+  } catch (err) {
+    logger.error('brain.call_failed', {
+      endpoint,
+      latency_ms: Date.now() - startedAt,
+      status: err.response?.status,
+      error: err.message,
+      request_id: requestId,
+    });
+    throw err;
+  }
 }
 
-/**
- * Forward a process-intent request to the Python brain.
- * @param {{ store: { name: string, type: string }, user_list: string[], purchase_history: object[] }} payload
- */
-async function processIntent(payload) {
-  const { data } = await client.post('/v1/process-intent', payload);
-  return data;
-}
-
-/**
- * Run the agentic restock loop on the brain.
- * @param {{ store: { name: string, type: string }, current_list: string[], purchase_history: object[] }} payload
- */
-async function checkRestock(payload) {
-  const { data } = await client.post('/v1/restock', payload);
-  return data;
-}
-
-/**
- * Run the agentic nudge decision on the brain.
- * Claude decides whether to send a push notification and what to say.
- * @param {{ purchase_history: object[], current_list: string[], days_since_last_trip: number }} payload
- */
-async function checkNudge(payload) {
-  const { data } = await client.post('/v1/nudge', payload);
-  return data;
-}
+async function recommend(payload)    { return callBrain('/v1/recommend',      payload); }
+async function processIntent(payload) { return callBrain('/v1/process-intent', payload); }
+async function checkRestock(payload)  { return callBrain('/v1/restock',        payload); }
+async function checkNudge(payload)    { return callBrain('/v1/nudge',          payload); }
 
 module.exports = { recommend, processIntent, checkRestock, checkNudge };
