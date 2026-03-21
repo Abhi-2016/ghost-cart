@@ -20,10 +20,18 @@ class Settings(BaseSettings):
     # Shared secret that the gateway must include as X-Internal-Secret header
     brain_internal_secret: str = ""
 
+    # Comma-separated list of allowed CORS origins (gateway URL in production)
+    # e.g. "https://ghost-cart-gateway.railway.app,http://localhost:3000"
+    allowed_origins: str = "http://localhost:3000"
+
     # In-process LRU cache for AI responses (entries)
     cache_maxsize: int = 512
     # Seconds before a cached AI response expires
     cache_ttl: int = 600
+
+    @property
+    def allowed_origins_list(self) -> list[str]:
+        return [o.strip() for o in self.allowed_origins.split(",") if o.strip()]
 
 
 settings = Settings()  # type: ignore[call-arg]
