@@ -4,13 +4,13 @@
     {
       "name": "brain",
       "runtimeExecutable": "/bin/bash",
-      "runtimeArgs": ["-c", "cd /Users/abhishekvenkatesh/Documents/Ghost-Cart/brain && /usr/bin/python3 -m uvicorn main:app --port 8000"],
+      "runtimeArgs": ["-c", "cd /Users/abhishekvenkatesh/Documents/Ghost-Cart/brain && /usr/bin/python3 -m uvicorn main:app --port 8000 --loop asyncio --http h11"],
       "port": 8000
     },
     {
       "name": "gateway",
-      "runtimeExecutable": "/Users/abhishekvenkatesh/.nvm/versions/node/v24.14.0/bin/npm",
-      "runtimeArgs": ["run", "dev"],
+      "runtimeExecutable": "/bin/bash",
+      "runtimeArgs": ["-c", "cd /Users/abhishekvenkatesh/Documents/Ghost-Cart/gateway && /Users/abhishekvenkatesh/.nvm/versions/node/v24.14.0/bin/npm run dev"],
       "port": 3000
     },
     {
