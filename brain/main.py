@@ -41,7 +41,7 @@ app.add_middleware(InternalSecretMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=settings.allowed_origins_list,  # set ALLOWED_ORIGINS in .env
     allow_methods=["POST", "GET"],
     allow_headers=["*"],
 )

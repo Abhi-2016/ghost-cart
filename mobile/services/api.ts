@@ -1,8 +1,9 @@
 import axios from 'axios';
 
-// Point this at your gateway. On a real device, replace with your
-// machine's local IP address (e.g. http://192.168.1.x:3000)
-const BASE_URL = 'http://localhost:3000';
+// In development: set EXPO_PUBLIC_GATEWAY_URL in mobile/.env
+// For EAS builds: set it in eas.json or the EAS dashboard
+// Fallback keeps local dev working without any setup
+const BASE_URL = process.env.EXPO_PUBLIC_GATEWAY_URL ?? 'http://localhost:3000';
 
 const client = axios.create({
   baseURL: BASE_URL,

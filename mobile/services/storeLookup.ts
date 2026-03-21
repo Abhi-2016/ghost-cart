@@ -10,8 +10,8 @@
 import axios from 'axios';
 import { StoreCoords } from '../store/useCartStore';
 
-// Keep this in sync with services/api.ts
-const BASE_URL = 'http://localhost:3000';
+// Reads from the same env var as services/api.ts — set EXPO_PUBLIC_GATEWAY_URL
+const BASE_URL = process.env.EXPO_PUBLIC_GATEWAY_URL ?? 'http://localhost:3000';
 
 export type StoreLocation = {
   name: string;
