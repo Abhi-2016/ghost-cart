@@ -85,7 +85,7 @@ Internet → [Gateway] — validated, rate-limited — → [Brain] — secret-ga
 
 ```bash
 cd brain
-cp .env.example .env        # fill in ANTHROPIC_API_KEY and BRAIN_INTERNAL_SECRET
+cp .env.example .env        # fill in ANTHROPIC_API_KEY, BRAIN_INTERNAL_SECRET, ALLOWED_ORIGINS
 pip install -r requirements.txt
 uvicorn main:app --reload
 # → http://localhost:8000/health
@@ -95,7 +95,7 @@ uvicorn main:app --reload
 
 ```bash
 cd gateway
-cp .env.example .env        # fill in BRAIN_BASE_URL and BRAIN_INTERNAL_SECRET
+cp .env.example .env        # fill in BRAIN_INTERNAL_SECRET, GOOGLE_PLACES_API_KEY
 npm install
 npm run dev
 # → http://localhost:3000/health
@@ -105,11 +105,16 @@ npm run dev
 
 ```bash
 cd mobile
+cp .env.example .env        # set EXPO_PUBLIC_GATEWAY_URL (see options below)
 npm install
 npx expo start
 # Scan QR code with Expo Go on your device
-# Update BASE_URL in mobile/services/api.ts to your machine's local IP
 ```
+
+`EXPO_PUBLIC_GATEWAY_URL` options:
+- **Simulator:** `http://localhost:3000`
+- **Real device (same WiFi):** `http://192.168.x.x:3000` — your machine's local IP
+- **Production:** `https://your-gateway.railway.app`
 
 ---
 
@@ -148,8 +153,9 @@ curl -s -X POST http://localhost:3000/api/v1/nudge/check \
 | `PORT` | Express listen port (default `3000`) |
 | `NODE_ENV` | `development` \| `production` |
 | `BRAIN_BASE_URL` | Full URL of the brain service |
-| `BRAIN_INTERNAL_SECRET` | Shared secret for gateway → brain auth |
+| `BRAIN_INTERNAL_SECRET` | Shared secret for gateway → brain auth — `openssl rand -hex 32` |
 | `GOOGLE_PLACES_API_KEY` | Google Places Nearby Search key |
+| `LOG_LEVEL` | `debug` \| `info` \| `warn` \| `error` (default `info`) |
 
 ### `brain/.env`
 
@@ -158,8 +164,40 @@ curl -s -X POST http://localhost:3000/api/v1/nudge/check \
 | `ANTHROPIC_API_KEY` | Anthropic secret key — never forwarded to clients |
 | `CLAUDE_MODEL` | Model ID (default `claude-sonnet-4-6`) |
 | `BRAIN_INTERNAL_SECRET` | Must match gateway value |
+| `ALLOWED_ORIGINS` | Comma-separated CORS origins — set to your gateway URL in production |
 | `CACHE_MAXSIZE` | Max entries in AI response cache |
 | `CACHE_TTL` | Seconds before cached AI response expires |
+| `LOG_LEVEL` | `DEBUG` \| `INFO` \| `WARNING` \| `ERROR` (default `INFO`) |
+
+### `mobile/.env`
+
+| Variable | Description |
+|---|---|
+| `EXPO_PUBLIC_GATEWAY_URL` | Gateway URL baked in at build time — `http://localhost:3000` for local dev |
+
+---
+
+## Logging
+
+All logs are structured JSON written to stdout — captured automatically by Railway/Render in production with no extra setup.
+
+```bash
+LOG_LEVEL=INFO    # production (default)
+LOG_LEVEL=DEBUG   # shows every Claude loop iteration and tool call
+```
+
+Every request gets an `X-Request-ID` correlation ID forwarded from gateway → brain, so you can trace a single user action across both services:
+
+```json
+{"event":"brain.call",         "endpoint":"/v1/nudge","latency_ms":3813,"request_id":"abc123"}
+{"event":"agent.start",        "agent":"nudge","days_since_last_trip":14.0,"request_id":"abc123"}
+{"event":"agent.claude_response","input_tokens":1263,"output_tokens":198,"latency_ms":3797,"request_id":"abc123"}
+{"event":"agent.tool_call",    "tool":"send_nudge","urgency":"high","suggested_items":["Milk","Eggs"],"request_id":"abc123"}
+{"event":"agent.complete",     "action":"send","iterations":1,"total_latency_ms":3798,"request_id":"abc123"}
+{"event":"request",            "method":"POST","status":200,"latency_ms":3822,"request_id":"abc123"}
+```
+
+`input_tokens + output_tokens` on every `agent.claude_response` line maps directly to Claude API cost.
 
 ---
 
@@ -170,19 +208,22 @@ Ghost-Cart/
 ├── gateway/                  # Node.js Orchestrator (:3000)
 │   └── src/
 │       ├── routes/           # cart, intent, stores, restock, nudge
-│       ├── services/         # brainClient, cache
-│       └── middleware/       # errorHandler
+│       ├── services/         # brainClient (with latency logging), cache, placesClient
+│       ├── middleware/       # errorHandler, requestLogger (JSON, replaces morgan)
+│       └── lib/              # logger.js (JSON writer), requestContext.js (AsyncLocalStorage)
 │
 ├── brain/                    # Python AI Engine (:8000)
 │   └── app/
 │       ├── routers/          # recommend, intent, restock, nudge
-│       ├── services/         # ai, restock_agent, nudge_agent
-│       └── middleware/       # auth
+│       ├── services/         # ai, restock_agent, nudge_agent (all with structured logs)
+│       ├── middleware/       # auth, request_id (ContextVar correlation ID)
+│       ├── logging_config.py # JSON formatter via python-json-logger
+│       └── config.py         # pydantic-settings (incl. ALLOWED_ORIGINS, LOG_LEVEL)
 │
 ├── mobile/                   # React Native / Expo App
 │   ├── app/                  # Expo Router screens + layout
 │   ├── hooks/                # useLocationWatcher, useNudgeAgent
-│   ├── services/             # api, storeLookup
+│   ├── services/             # api.ts, storeLookup.ts (both read EXPO_PUBLIC_GATEWAY_URL)
 │   └── store/                # useCartStore (Zustand)
 │
 ├── test_cases.json           # Agent behaviour test cases (v0.3.0, 12 cases)
