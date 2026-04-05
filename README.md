@@ -1,6 +1,29 @@
 # Ghost-Cart
 
-A **location-aware AI shopping assistant** built on a hybrid Node.js + Python stack with a React Native mobile app. Ghost-Cart uses Claude to power both reactive and proactive agentic features — from filtering your list when you walk into a store, to autonomously deciding when to nudge you to go shopping.
+> **Location-aware AI shopping assistant** — Claude autonomously decides what to restock, when to nudge you to go shopping, and what to say. Built on a Node.js gateway + Python FastAPI brain + React Native app.
+
+[![Node.js](https://img.shields.io/badge/Node.js-20%2B-339933?logo=node.js&logoColor=white)](https://nodejs.org)
+[![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white)](https://python.org)
+[![React Native](https://img.shields.io/badge/React%20Native-Expo%20SDK%2054-0EA5E9?logo=expo&logoColor=white)](https://expo.dev)
+[![Claude](https://img.shields.io/badge/Claude-Sonnet%204.6-D97706?logo=anthropic&logoColor=white)](https://anthropic.com)
+
+---
+
+## What is Ghost-Cart?
+
+Ghost-Cart is a grocery assistant that goes beyond a simple list app — it actively reasons about your shopping needs using Claude AI.
+
+| Capability | How it works |
+|---|---|
+| **Chat to build your list** | Type naturally ("high-protein breakfast") — Claude suggests items and adds them |
+| **Smart store filtering** | Walk into a store and the list automatically hides items that store doesn't carry |
+| **Restock Agent** | Claude scans your purchase history and autonomously decides what to add back |
+| **Nudge Agent** | After 12h in the background, Claude decides whether to send a push notification and writes the copy itself |
+| **GPS store detection** | Polls every 30s; detects when you enter a known store and triggers agents automatically |
+
+The two **agentic** features (Restock + Nudge) use `tool_choice="auto"` with a while-loop — Claude runs freely until it decides it's done, with no hard-coded rules or thresholds.
+
+---
 
 ---
 
