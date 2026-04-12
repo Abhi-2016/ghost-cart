@@ -268,6 +268,79 @@ Agent behaviour is documented and regression-tested in [`test_cases.json`](./tes
 
 ---
 
+## Deployment
+
+### Railway (Gateway + Brain)
+
+Each service deploys independently on Railway. A `railway.toml` in each service directory tells Railway the start command and health check path.
+
+**Steps:**
+1. Install Railway CLI: `npm i -g @railway/cli` → `railway login`
+2. Create a new Railway project
+3. **Deploy Brain first** (gateway needs its URL):
+   ```bash
+   cd brain
+   railway up
+   ```
+   Set env vars in Railway dashboard: `ANTHROPIC_API_KEY`, `BRAIN_INTERNAL_SECRET` (generate with `openssl rand -hex 32`), `ALLOWED_ORIGINS` (set to gateway URL after deploying gateway), `CLAUDE_MODEL=claude-sonnet-4-6`
+
+4. **Deploy Gateway:**
+   ```bash
+   cd gateway
+   railway up
+   ```
+   Set env vars: `BRAIN_BASE_URL` (the brain's Railway URL), `BRAIN_INTERNAL_SECRET` (same value as brain), `GOOGLE_PLACES_API_KEY`
+
+5. **Update brain's `ALLOWED_ORIGINS`** with the gateway's Railway URL — this is the CORS whitelist.
+
+> **Internal networking:** If both services are in the same Railway project, use Railway's private networking (`brain.railway.internal`) for `BRAIN_BASE_URL` to avoid egress charges.
+
+---
+
+### EAS Build (Mobile)
+
+The mobile app uses [Expo Application Services (EAS)](https://expo.dev/eas) for building distributable binaries.
+
+**One-time setup:**
+```bash
+npm install -g eas-cli
+eas login
+cd mobile
+eas init          # links project to your Expo account, writes projectId to app.json
+```
+
+**Set the gateway URL as an EAS environment variable** (baked into the binary at build time):
+```bash
+eas env:create --name EXPO_PUBLIC_GATEWAY_URL --value https://your-gateway.railway.app --environment preview
+eas env:create --name EXPO_PUBLIC_GATEWAY_URL --value https://your-gateway.railway.app --environment production
+```
+
+**Build for testers:**
+```bash
+# Android APK (internal distribution — direct download link)
+eas build --platform android --profile preview
+
+# iOS (requires Apple Developer account — $99/yr)
+eas build --platform ios --profile preview
+```
+
+Testers receive a link to download the APK directly (Android) or install via TestFlight (iOS).
+
+---
+
+### Observability (Logtail)
+
+Gateway and Brain already emit structured JSON logs to stdout. Railway captures stdout automatically. To search and alert on logs:
+
+1. Sign up at [logtail.com](https://logtail.com)
+2. Create two Sources: one for gateway (Node.js), one for brain (Python)
+3. In Railway: **Settings → Log Drains** → add an HTTP drain pointing to Logtail's ingest URL with your source token
+4. Done — all JSON fields (`event`, `latency_ms`, `request_id`, `agent`, etc.) are immediately queryable
+
+No code changes required. Every log line is already structured.
+
+---
+
 ## Tech Stack
 
 | Layer | Technology |
