@@ -1,5 +1,6 @@
 import hashlib
 import json
+import re
 
 import anthropic
 from cachetools import TTLCache
@@ -56,7 +57,11 @@ async def get_recommendations(
         messages=[{"role": "user", "content": user_message}],
     )
 
-    raw_text = message.content[0].text
+    raw_text = message.content[0].text.strip()
+    # Claude sometimes wraps JSON in ```json ... ``` code fences — strip them
+    if raw_text.startswith("```"):
+        raw_text = re.sub(r"^```(?:json)?\s*", "", raw_text)
+        raw_text = re.sub(r"\s*```\s*$", "", raw_text)
     parsed = json.loads(raw_text)
 
     result = {
