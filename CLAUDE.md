@@ -301,6 +301,79 @@ grep "verify-001" gateway.log brain.log
 
 ---
 
+## Production Deployment
+
+### Live URLs (Railway)
+
+| Service | URL |
+|---|---|
+| Gateway | `https://gateway-production-9495.up.railway.app` |
+| Brain | `https://ghost-cart-production.up.railway.app` |
+
+Health checks: append `/health` to either URL.
+
+### Railway — Monorepo Setup Notes
+
+This is a monorepo (gateway + brain + mobile in one repo). Railway must be told which subdirectory is each service's root, or it deploys from `/` and can't find `main.py` / `package.json`.
+
+**Critical step — set Root Directory per service via GraphQL API:**
+```bash
+RAILWAY_TOKEN=$(cat ~/.railway/config.json | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['user']['accessToken'])")
+PROJECT_ID="6cf3cc6f-83c9-4150-b90e-ba6ca30fd034"
+ENV_ID="9d8cf807-a919-4e8c-b299-e249fb2e2d9e"
+
+# Brain: root = "brain"
+curl -X POST https://backboard.railway.com/graphql/v2 \
+  -H "Authorization: Bearer $RAILWAY_TOKEN" -H "Content-Type: application/json" \
+  -d '{"query":"mutation { serviceInstanceUpdate(serviceId: \"<BRAIN_ID>\", environmentId: \"<ENV_ID>\", input: { rootDirectory: \"brain\" }) }"}'
+
+# Gateway: root = "gateway"  
+curl -X POST https://backboard.railway.com/graphql/v2 \
+  -H "Authorization: Bearer $RAILWAY_TOKEN" -H "Content-Type: application/json" \
+  -d '{"query":"mutation { serviceInstanceUpdate(serviceId: \"<GW_ID>\", environmentId: \"<ENV_ID>\", input: { rootDirectory: \"gateway\" }) }"}'
+```
+
+After setting root directories, deploy from the **repo root**:
+```bash
+railway up --service <BRAIN_SERVICE_ID> --detach --ci      # from repo root
+railway up --service <GATEWAY_SERVICE_ID> --detach --ci    # from repo root
+```
+
+### EAS Build (Mobile)
+
+| Property | Value |
+|---|---|
+| Expo account | `abhiai90` |
+| Project slug | `ghost-cart` |
+| EAS Project ID | `0bfcd389-eca1-4cd6-a3eb-dd99f7d2ee08` |
+| Android bundle ID | `com.abhishek.ghostcart` |
+| iOS bundle ID | `com.abhishek.ghostcart` |
+
+Build commands:
+```bash
+cd mobile
+eas build --platform android --profile preview   # APK for internal testers
+eas build --platform android --profile production # AAB for Play Store
+eas build --platform ios     --profile preview   # iOS (requires Apple Dev account)
+```
+
+`EXPO_PUBLIC_GATEWAY_URL` is set as an EAS environment variable (not in `.env`) — it is baked into the binary at build time. Changing it requires a new build.
+
+**Known issue fixed:** `mobile/.npmrc` contains `legacy-peer-deps=true` to resolve a peer dependency conflict between `react@19.1.0` (Expo SDK 54 default) and `react-dom@19.2.4` (indirect dependency). Without this file, `npm install` fails on the EAS build server.
+
+### Known Bug Fixed in Production
+
+**`brain/app/services/ai.py` — JSON code fence stripping:**
+Claude sometimes wraps its JSON response in `` ```json `` ... `` ``` `` markdown blocks. `json.loads()` fails on the backtick prefix with `"Expecting value: line 1 column 1 (char 0)"`. The fix strips code fences before parsing:
+```python
+if raw_text.startswith("```"):
+    raw_text = re.sub(r"^```(?:json)?\s*", "", raw_text)
+    raw_text = re.sub(r"\s*```\s*$", "", raw_text)
+```
+Apply this pattern to any service that parses free-form JSON from Claude.
+
+---
+
 ## Local Development Quick-start
 
 ```bash

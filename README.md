@@ -6,6 +6,8 @@
 [![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white)](https://python.org)
 [![React Native](https://img.shields.io/badge/React%20Native-Expo%20SDK%2054-0EA5E9?logo=expo&logoColor=white)](https://expo.dev)
 [![Claude](https://img.shields.io/badge/Claude-Sonnet%204.6-D97706?logo=anthropic&logoColor=white)](https://anthropic.com)
+[![Gateway](https://img.shields.io/badge/Gateway-Live%20on%20Railway-0B0D0E?logo=railway&logoColor=white)](https://gateway-production-9495.up.railway.app/health)
+[![Brain](https://img.shields.io/badge/Brain-Live%20on%20Railway-0B0D0E?logo=railway&logoColor=white)](https://ghost-cart-production.up.railway.app/health)
 
 ---
 
@@ -89,16 +91,31 @@ Internet → [Gateway] — validated, rate-limited — → [Brain] — secret-ga
 
 ## Roadmap
 
+### Shipped ✅
+| Feature | Notes |
+|---|---|
+| AI chat bot | Live in production |
+| GPS store detection | Haversine distance, 30s polling |
+| Store-aware intent filter | `tool_choice="tool"` non-agentic |
+| Restock Agent | `tool_choice="auto"` agentic loop |
+| Nudge Agent | `tool_choice="auto"` agentic loop + local push notifications |
+| Structured JSON logging | Correlation IDs, `X-Request-ID` end-to-end |
+| Railway deployment | Gateway + Brain live, health checks passing |
+| EAS Android APK | Preview build, internal distribution |
+
+### Up Next
 | # | Feature | What it does | Why it's agentic |
 |---|---|---|---|
-| 1 | **Multi-Store Trip Planner** | Claude plans the most efficient route across multiple stores to cover your full list | Claude decides which store covers which items and optimises the order — no code sets the rules |
-| 2 | **Meal Planning Agent** | Say "plan dinners for this week" → Claude builds a full meal plan and populates your list | Multi-step loop: Claude picks meals, checks pantry gaps, adds ingredients, balances nutrition |
-| 3 | **Budget Agent** | Set a spend limit; Claude autonomously swaps expensive items for cheaper alternatives | Claude evaluates trade-offs per item across loop rounds — not a single rule-based swap |
-| 4 | **Receipt Scanner** | Photo of a receipt → Claude extracts purchases and updates your history automatically | Claude reads unstructured data and maps it to structured purchase records without templates |
-| 5 | **Pantry Memory** | Tracks what you have at home; Claude avoids adding items you don't need yet | Claude reasons across pantry state + history + list simultaneously each run |
-| 6 | **PostgreSQL persistence** | Persist lists, purchase history, and preferences across devices | — |
-| 7 | **Redis cache** | Multi-instance cache layer to replace in-process node-cache | — |
-| 8 | **Docker Compose** | One-command local setup for all three services | — |
+| 1 | **Google Places key** | Enable "locate nearby stores" endpoint | Not agentic — adds missing env var |
+| 2 | **Logtail log drain** | Searchable structured logs in production | Not agentic — Railway log drain config |
+| 3 | **iOS build** | TestFlight for 2 iOS testers | Requires Apple Developer enrollment |
+| 4 | **Multi-Store Trip Planner** | Claude plans the most efficient route across multiple stores | Claude decides store order and item routing — no code rules |
+| 5 | **Meal Planning Agent** | "Plan dinners for this week" → full meal plan + list populated | Multi-step loop: meals → pantry gaps → ingredients → nutrition |
+| 6 | **Budget Agent** | Set a spend limit; Claude swaps expensive items autonomously | Claude evaluates trade-offs across loop rounds |
+| 7 | **Receipt Scanner** | Photo of receipt → Claude extracts purchases, updates history | Claude reads unstructured data, maps to structured records |
+| 8 | **Pantry Memory** | Tracks what's at home; Claude avoids re-buying | Claude reasons across pantry + history + list per run |
+| 9 | **Langfuse evals** | Score Claude's tool decisions in production | — |
+| 10 | **PostgreSQL persistence** | Persist lists and history across devices | — |
 
 ---
 
@@ -143,17 +160,20 @@ npx expo start
 
 ## Example Requests
 
+Use `http://localhost:3000` locally or the live gateway URL in production.
+
 ### Grocery recommendations (chat bot)
 ```bash
-curl -s -X POST http://localhost:3000/api/v1/cart/recommend \
+curl -s -X POST https://gateway-production-9495.up.railway.app/api/v1/cart/recommend \
   -H 'Content-Type: application/json' \
   -d '{"query":"high-protein breakfast","location":{"lat":37.77,"lng":-122.41}}'
 ```
 
 ### Nudge Agent (agentic)
 ```bash
-curl -s -X POST http://localhost:3000/api/v1/nudge/check \
+curl -s -X POST https://gateway-production-9495.up.railway.app/api/v1/nudge/check \
   -H 'Content-Type: application/json' \
+  -H 'X-Request-ID: my-trace-id' \
   -d '{
     "purchase_history": [
       {"name":"Milk","last_bought_at_ms":1771737345126,"store_where":"FreshCo","count":10},
@@ -163,6 +183,19 @@ curl -s -X POST http://localhost:3000/api/v1/nudge/check \
     "days_since_last_trip": 14.0
   }'
 # → {"action":"send","title":"Time to restock! 🛒","urgency":"high","suggested_items":["Milk","Eggs"]}
+```
+
+### Restock Agent (agentic)
+```bash
+curl -s -X POST https://gateway-production-9495.up.railway.app/api/v1/restock/check \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "store": {"name":"FreshCo","type":"grocery_only"},
+    "current_list": [],
+    "purchase_history": [
+      {"name":"Milk","last_bought_at_ms":1771737345126,"store_where":"FreshCo","count":5}
+    ]
+  }'
 ```
 
 ---
@@ -270,74 +303,76 @@ Agent behaviour is documented and regression-tested in [`test_cases.json`](./tes
 
 ## Deployment
 
-### Railway (Gateway + Brain)
+### Live Production (Railway)
 
-Each service deploys independently on Railway. A `railway.toml` in each service directory tells Railway the start command and health check path.
+Both services are deployed and healthy:
 
-**Steps:**
-1. Install Railway CLI: `npm i -g @railway/cli` → `railway login`
-2. Create a new Railway project
-3. **Deploy Brain first** (gateway needs its URL):
-   ```bash
-   cd brain
-   railway up
-   ```
-   Set env vars in Railway dashboard: `ANTHROPIC_API_KEY`, `BRAIN_INTERNAL_SECRET` (generate with `openssl rand -hex 32`), `ALLOWED_ORIGINS` (set to gateway URL after deploying gateway), `CLAUDE_MODEL=claude-sonnet-4-6`
+| Service | URL | Status |
+|---|---|---|
+| Gateway | `https://gateway-production-9495.up.railway.app` | ✅ Live |
+| Brain | `https://ghost-cart-production.up.railway.app` | ✅ Live |
 
-4. **Deploy Gateway:**
-   ```bash
-   cd gateway
-   railway up
-   ```
-   Set env vars: `BRAIN_BASE_URL` (the brain's Railway URL), `BRAIN_INTERNAL_SECRET` (same value as brain), `GOOGLE_PLACES_API_KEY`
+```bash
+# Verify both are up
+curl https://gateway-production-9495.up.railway.app/health
+curl https://ghost-cart-production.up.railway.app/health
+```
 
-5. **Update brain's `ALLOWED_ORIGINS`** with the gateway's Railway URL — this is the CORS whitelist.
+---
 
-> **Internal networking:** If both services are in the same Railway project, use Railway's private networking (`brain.railway.internal`) for `BRAIN_BASE_URL` to avoid egress charges.
+### Railway — Re-deploying (Monorepo)
+
+This is a monorepo. Both services share one repo. Railway must be told each service's root directory or it sees the whole repo and fails to detect the language.
+
+The root directories are already configured in Railway (`brain` → `brain/`, `gateway` → `gateway/`). To push new code to either service, run from the **repo root**:
+
+```bash
+# Re-deploy brain
+railway up --service 2b457fa4-fa83-4a95-a082-c816ef3fc563 --detach --ci
+
+# Re-deploy gateway
+railway up --service 893da436-e5ac-4379-a4d9-5709316c9fa0 --detach --ci
+```
+
+**Setting env vars via CLI:**
+```bash
+railway variable set "KEY=value" --service <SERVICE_ID> --skip-deploys
+```
 
 ---
 
 ### EAS Build (Mobile)
 
-The mobile app uses [Expo Application Services (EAS)](https://expo.dev/eas) for building distributable binaries.
+The mobile app is set up on EAS. Project: `@abhiai90/ghost-cart` (ID: `0bfcd389-eca1-4cd6-a3eb-dd99f7d2ee08`).
 
-**One-time setup:**
+`EXPO_PUBLIC_GATEWAY_URL` is already set as an EAS environment variable for `preview` and `production` environments — it is baked into the binary at build time.
+
+**Build a new Android APK for testers:**
 ```bash
-npm install -g eas-cli
-eas login
 cd mobile
-eas init          # links project to your Expo account, writes projectId to app.json
-```
-
-**Set the gateway URL as an EAS environment variable** (baked into the binary at build time):
-```bash
-eas env:create --name EXPO_PUBLIC_GATEWAY_URL --value https://your-gateway.railway.app --environment preview
-eas env:create --name EXPO_PUBLIC_GATEWAY_URL --value https://your-gateway.railway.app --environment production
-```
-
-**Build for testers:**
-```bash
-# Android APK (internal distribution — direct download link)
 eas build --platform android --profile preview
+```
 
-# iOS (requires Apple Developer account — $99/yr)
+This outputs a QR code + download link to share with testers directly.
+
+**iOS** (requires Apple Developer account — $99/yr):
+```bash
 eas build --platform ios --profile preview
 ```
 
-Testers receive a link to download the APK directly (Android) or install via TestFlight (iOS).
+> **Note:** `mobile/.npmrc` sets `legacy-peer-deps=true` to resolve a `react-dom` peer dependency conflict during the EAS build. Do not remove this file.
 
 ---
 
 ### Observability (Logtail)
 
-Gateway and Brain already emit structured JSON logs to stdout. Railway captures stdout automatically. To search and alert on logs:
+Gateway and Brain already emit structured JSON logs to stdout — Railway captures stdout automatically. To make logs searchable:
 
-1. Sign up at [logtail.com](https://logtail.com)
-2. Create two Sources: one for gateway (Node.js), one for brain (Python)
-3. In Railway: **Settings → Log Drains** → add an HTTP drain pointing to Logtail's ingest URL with your source token
-4. Done — all JSON fields (`event`, `latency_ms`, `request_id`, `agent`, etc.) are immediately queryable
+1. Sign up at [logtail.com](https://logtail.com) → create a Source (HTTP type) → copy the Source Token
+2. In Railway: **Settings → Log Drains** → add HTTP drain to `https://in.logtail.com/` with your token
+3. Done — all JSON fields (`event`, `latency_ms`, `request_id`, `agent`, `input_tokens`, etc.) are immediately queryable
 
-No code changes required. Every log line is already structured.
+No code changes required.
 
 ---
 
