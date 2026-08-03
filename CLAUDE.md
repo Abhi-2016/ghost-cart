@@ -418,3 +418,52 @@ curl -s -X POST http://localhost:3000/api/v1/restock/check \
   -H 'Content-Type: application/json' \
   -d '{"store":{"name":"FreshCo","type":"grocery_only"},"current_list":[],"purchase_history":[{"name":"Milk","last_bought_at_ms":1771737345126,"store_where":"FreshCo","count":5}]}'
 ```
+
+---
+
+## Concepts Practised
+
+### Agentic AI — how Claude was given autonomy to decide and act
+
+| Concept | Where Practised |
+|---|---|
+| Tool use loop | `nudge_agent.py`, `restock_agent.py` — `tool_use` blocks fed back as `tool_result` each iteration |
+| `tool_choice` as a design lever | Agents use `"auto"` (Claude decides freely); Intent Filter uses `"tool"` (code forces the call); Chat bot uses neither |
+| Tool design as interface contract | `send_nudge` / `skip_nudge` as deliberate opposites — Claude must make an explicit binary choice; no silent no-op path |
+| Tool schema as business rule | Urgency thresholds (low 5–9d · medium 10–13d · high 14+d) live in `input_schema` description fields, not in application code |
+| Agentic loop safety nets | `MAX_ITERATIONS = 10` cap + hardcoded skip fallback + `agent.fallback` log event if Claude never calls a tool |
+| Stateless agent API | Full context (purchase history, days elapsed, current list) sent on every request — no session state held server-side |
+| History as agent context | `purchase_history` + `days_since_last_trip` give Claude everything it needs, reconstructed fresh on each call |
+| AI reliability pattern | Claude wraps JSON in ` ```json``` ` fences — `re.sub` strips them before `json.loads()` in `ai.py`; pattern documented for all future services |
+| Human-in-the-loop by design | Claude decides *whether* to notify, *what* to write, and at *what urgency* — humans receive the result, not configure it |
+| AI copy generation | Push notification title + body written by Claude from context — specific, not templated; schema constrains format, not content |
+
+### AI PM — product decisions specific to AI-powered systems
+
+| Concept | Where Practised |
+|---|---|
+| Agentic vs. non-agentic taxonomy | 8-feature decision matrix in README: who decides, Claude call count, `tool_choice` mode, output format — for every feature |
+| AI cost control as architecture | Two cache layers designed first: `node-cache` (gateway, 10 min TTL) + `TTLCache` (brain) — ~60% fewer API calls at 60% hit rate |
+| AI observability | `input_tokens`, `output_tokens`, `latency_ms` logged on every Claude call — maps to cost per loop iteration, not just per request |
+| Correlation ID for AI tracing | `X-Request-ID` forwarded gateway → brain, stored in `ContextVar` — one `grep` reconstructs a full user tap across both services |
+| Evaluation strategy for agents | `test_cases.json` v0.3.0 — 12 input/expected-decision pairs defining what Claude *should decide*, not just valid output |
+| AI security architecture | `ANTHROPIC_API_KEY` isolated in brain; gateway communicates via `X-Internal-Secret` and never sees the AI key |
+| Prompt engineering for structured output | System prompt includes exact JSON schema; decision guidelines in prompt body, not in code conditionals |
+| LLM as decision engine | Threshold logic (stale vs. fresh, nudge vs. skip) owned by Claude — no hardcoded rules in application code |
+| AI debugging in production | `stop_reason`, token counts, and per-iteration latency → root-caused a live 502 to Claude wrapping JSON in code fences |
+| Skills as codified AI workflow | SKILL.md system explored to encode deploy, test, and agent-scaffold steps as project-specific slash commands |
+
+### Classic PM — foundational product management applied throughout
+
+| Concept | Where Practised |
+|---|---|
+| MVP scoping | 8 features shipped; 9 deferred — each roadmap item includes a "why agentic" rationale, not just a feature name |
+| PR-driven delivery | 9 PRs, each single-scope, conventional commit style; descriptions explain *why*, not just what |
+| Go-live planning | 5-step checklist: Railway services via GraphQL API, root directory config, env vars, EAS build, smoke tests |
+| Cost control as PM decision | Caching designed before feature code — "~60% fewer AI calls" stated as a product metric, not an engineering footnote |
+| Security as architecture | Brain not publicly routable — a trust boundary decision made at product design level, not retrofitted after |
+| Documentation as product artifact | README as external landing page; CLAUDE.md as internal spec — both updated in every PR |
+| Test cases as behavior contract | `test_cases.json` TC-01→TC-12 defines what Claude should decide per scenario — a PM spec, not just a QA checklist |
+| Context continuity | `.claude/ghost-cart-project-plan.md` + memory system — any session resumes without re-establishing context |
+| Mobile distribution strategy | APK (internal testers) → AAB (Play Store) → TestFlight (iOS, blocked on Apple enrollment) — three tiers with explicit prerequisites |
+| Dependency tracking | Live blocker list: Google Places key (external), Logtail drain (Railway config), iOS build ($99/yr enrollment) |
